@@ -642,7 +642,7 @@ app.use((req, res) => {
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅ Server running on port ${PORT}`);
     console.log(`📝 API: https://backendpay-1.onrender.com/api`);
-    console.log(`🏥 Health Check: https://backendpay-1.onrender.com/api/health\n`);
+    console.log(`🏥 Health Check: https://backendpay-1.onrender.com/api/health`);
     seedData();
 });
 
