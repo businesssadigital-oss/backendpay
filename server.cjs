@@ -641,8 +641,8 @@ app.use((req, res) => {
 // --- Start Server ---
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅ Server running on port ${PORT}`);
-    console.log(`📝 API: http://localhost:${PORT}/api`);
-    console.log(`🏥 Health Check: http://localhost:${PORT}/api/health\n`);
+    console.log(`📝 API: https://backendpay-1.onrender.com/api`);
+    console.log(`🏥 Health Check: https://backendpay-1.onrender.com/api/health\n`);
     seedData();
 });
 
