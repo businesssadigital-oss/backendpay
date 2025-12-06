@@ -31,7 +31,7 @@ async function migrate() {
   const repoRoot = path.resolve(__dirname);
   const env = readEnv(path.join(repoRoot, '.env'));
 
-  const sourceUri = process.env.SOURCE_MONGO || 'https://backendpay-1.onrender.com/paytest';
+  const sourceUri = process.env.SOURCE_MONGO || 'mongodb+srv://dariripay:s.a.2016%40S@pay.w8d4cp7.mongodb.net/?appName=pay';
   const targetUri = process.env.MONGO_URI || env.MONGO_URI;
 
   if (!targetUri) {

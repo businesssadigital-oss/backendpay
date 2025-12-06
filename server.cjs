@@ -9,7 +9,7 @@ const path = require('path');
 // --- Configuration ---
 const app = express();
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || 'https://backendpay-1.onrender.com/paytest';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://dariripay:s.a.2016%40S@pay.w8d4cp7.mongodb.net/?appName=pay';
 
 // Note: admin editor endpoints removed for production safety.
 

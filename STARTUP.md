@@ -162,7 +162,7 @@ $env:PORT=5001; npm start
 Make sure frontend is using correct API URL:
 ```javascript
 // In frontend services, use:
-const API_URL = 'http://localhost:5000/api'
+const API_URL = 'https://backendpay-1.onrender.com/api'
 ```
 
 ## Production Deployment
