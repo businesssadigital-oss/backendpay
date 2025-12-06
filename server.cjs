@@ -284,6 +284,17 @@ app.post('/api/codes', asyncHandler(async (req, res) => {
 
   const result = await Code.insertMany(newCodes);
   console.log(`✅ Added ${result.length} codes for product ${productId}`);
+  // Also update the Product document's embedded availableCodes and stock to keep both sources consistent
+  try {
+    await Product.updateOne(
+      { id: String(productId) },
+      { $push: { availableCodes: { $each: codes } }, $inc: { stock: codes.length } }
+    );
+  } catch (err) {
+    console.error('⚠️ Failed to update Product with new codes:', err.message);
+    // Not a fatal error for codes insertion; continue to return success for codes collection
+  }
+
   res.status(201).json({ count: result.length, codes: result });
 }));
 
