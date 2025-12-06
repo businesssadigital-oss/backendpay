@@ -127,6 +127,23 @@ const PaymentMethod = mongoose.model('PaymentMethod', PaymentMethodSchema);
 const Review = mongoose.model('Review', ReviewSchema);
 const Code = mongoose.model('Code', CodeSchema);
 
+// --- Settings Schema (single document) ---
+const SettingsSchema = new mongoose.Schema({
+  siteName: { type: String, default: 'ماتاجر - Matajir' },
+  siteDescription: { type: String, default: 'منصة عربية لبيع البطاقات الرقمية والاشتراكات' },
+  logoUrl: { type: String, default: '' },
+  footerText: { type: String, default: 'جميع الحقوق محفوظة © ماتاجر' },
+  socialLinks: {
+    facebook: { type: String, default: '' },
+    twitter: { type: String, default: '' },
+    instagram: { type: String, default: '' },
+    telegram: { type: String, default: '' },
+    youtube: { type: String, default: '' }
+  }
+});
+
+const Settings = mongoose.model('Settings', SettingsSchema);
+
 // --- Seeding Data (If Empty) ---
 const seedData = async () => {
     // Simple check if DB is empty
@@ -319,6 +336,29 @@ app.put('/api/payment-methods/:id', asyncHandler(async (req, res) => {
     const method = await PaymentMethod.findOneAndUpdate({ id: req.params.id }, req.body, { new: true });
     if (!method) return res.status(404).json({ message: 'طريقة الدفع غير موجودة' });
     res.json(method);
+}));
+
+// --- Settings endpoints (GET/PUT) ---
+app.get('/api/settings', asyncHandler(async (req, res) => {
+  // Return the single settings document (or defaults)
+  let doc = await Settings.findOne().lean();
+  if (!doc) {
+    // Provide reasonable defaults if not present
+    doc = {
+      siteName: 'ماتاجر - Matajir',
+      siteDescription: 'منصة عربية لبيع البطاقات الرقمية والاشتراكات',
+      logoUrl: '',
+      footerText: 'جميع الحقوق محفوظة © ماتاجر',
+      socialLinks: { facebook: '', twitter: '', instagram: '', telegram: '', youtube: '' }
+    };
+  }
+  res.json(doc);
+}));
+
+app.put('/api/settings', asyncHandler(async (req, res) => {
+  const payload = req.body || {};
+  const updated = await Settings.findOneAndUpdate({}, payload, { upsert: true, new: true, setDefaultsOnInsert: true });
+  res.json(updated);
 }));
 
 // Users & Auth
