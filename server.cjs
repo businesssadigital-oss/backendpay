@@ -108,6 +108,22 @@ const ReviewSchema = new mongoose.Schema({
   date: String
 });
 
+// Settings schema - single document for platform settings
+const SettingsSchema = new mongoose.Schema({
+  id: { type: String, unique: true }, // use a constant id like 'platform'
+  siteName: String,
+  siteDescription: String,
+  logoUrl: String,
+  footerText: String,
+  socialLinks: {
+    facebook: String,
+    twitter: String,
+    instagram: String,
+    telegram: String,
+    youtube: String
+  }
+});
+
 const CodeSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   productId: String,
@@ -126,6 +142,7 @@ const Category = mongoose.model('Category', CategorySchema);
 const PaymentMethod = mongoose.model('PaymentMethod', PaymentMethodSchema);
 const Review = mongoose.model('Review', ReviewSchema);
 const Code = mongoose.model('Code', CodeSchema);
+const Settings = mongoose.model('Settings', SettingsSchema);
 
 // --- Seeding Data (If Empty) ---
 const seedData = async () => {
@@ -165,6 +182,19 @@ const seedData = async () => {
         await Product.insertMany(products);
         await User.insertMany(users);
         await PaymentMethod.insertMany(methods);
+        // Seed default settings document if not present
+        const existingSettings = await Settings.findOne({ id: 'platform' });
+        if (!existingSettings) {
+          await Settings.create({
+            id: 'platform',
+            siteName: 'ماتاجر - Matajir',
+            siteDescription: 'منصة عربية لبيع البطاقات الرقمية والاشتراكات',
+            logoUrl: '',
+            footerText: 'جميع الحقوق محفوظة © ماتاجر',
+            socialLinks: { facebook: '', twitter: '', instagram: '', telegram: '', youtube: '' }
+          });
+          console.log('Seeded default platform settings');
+        }
         console.log('Database Seeded!');
     }
 };
@@ -325,6 +355,21 @@ app.put('/api/payment-methods/:id', asyncHandler(async (req, res) => {
 app.get('/api/users', asyncHandler(async (req, res) => {
   const users = await User.find();
   res.json(users);
+}));
+
+// --- Settings Endpoints ---
+// GET /api/settings -> return platform settings
+app.get('/api/settings', asyncHandler(async (req, res) => {
+  const settings = await Settings.findOne({ id: 'platform' });
+  if (!settings) return res.status(404).json({ message: 'Settings not found' });
+  res.json(settings);
+}));
+
+// PUT /api/settings -> update platform settings
+app.put('/api/settings', asyncHandler(async (req, res) => {
+  const payload = req.body || {};
+  const updated = await Settings.findOneAndUpdate({ id: 'platform' }, payload, { new: true, upsert: true });
+  res.json(updated);
 }));
 
 app.post('/api/auth/login', asyncHandler(async (req, res) => {
@@ -644,6 +689,22 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`📝 API: https://backendpay-1.onrender.com/api`);
     console.log(`🏥 Health Check: https://backendpay-1.onrender.com/api/health`);
     seedData();
+    // Ensure settings document exists even if DB was previously seeded
+    (async () => {
+      try {
+        const defaults = {
+          id: 'platform',
+          siteName: 'ماتاجر - Matajir',
+          siteDescription: 'منصة عربية لبيع البطاقات الرقمية والاشتراكات',
+          logoUrl: '',
+          footerText: 'جميع الحقوق محفوظة © ماتاجر',
+          socialLinks: { facebook: '', twitter: '', instagram: '', telegram: '', youtube: '' }
+        };
+        await Settings.findOneAndUpdate({ id: 'platform' }, defaults, { upsert: true });
+      } catch (err) {
+        console.warn('Could not ensure default settings:', err.message || err);
+      }
+    })();
 });
 
 // --- Graceful Shutdown ---
