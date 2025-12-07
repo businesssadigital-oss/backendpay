@@ -279,18 +279,22 @@ app.get('/api/products', asyncHandler(async (req, res) => {
 app.post('/api/products', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const product = new Product(req.body);
   await product.save();
+  // notify clients that products changed
+  try { emitResourceChanged('products'); } catch (e) {}
   res.status(201).json(product);
 }));
 
 app.put('/api/products/:id', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const product = await Product.findOneAndUpdate({ id: req.params.id }, req.body, { new: true });
   if (!product) return res.status(404).json({ message: 'المنتج غير موجود' });
+  try { emitResourceChanged('products'); } catch (e) {}
   res.json(product);
 }));
 
 app.delete('/api/products/:id', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const product = await Product.findOneAndDelete({ id: req.params.id });
   if (!product) return res.status(404).json({ message: 'المنتج غير موجود' });
+  try { emitResourceChanged('products'); } catch (e) {}
   res.json({ success: true });
 }));
 
@@ -303,12 +307,14 @@ app.get('/api/categories', asyncHandler(async (req, res) => {
 app.post('/api/categories', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const cat = new Category(req.body);
   await cat.save();
+  try { emitResourceChanged('categories'); } catch (e) {}
   res.status(201).json(cat);
 }));
 
 app.delete('/api/categories/:id', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const category = await Category.findOneAndDelete({ id: req.params.id });
   if (!category) return res.status(404).json({ message: 'الفئة غير موجودة' });
+  try { emitResourceChanged('categories'); } catch (e) {}
   res.json({ success: true });
 }));
 
@@ -365,6 +371,7 @@ app.post('/api/codes', verifyToken, requireAdmin, asyncHandler(async (req, res) 
   if (codesToInsert.length > 0) {
     result = await Code.insertMany(codesToInsert);
     console.log(`✅ Added ${result.length} codes for product ${productId} (${duplicateCount} duplicates skipped)`);
+    try { emitResourceChanged('inventory'); emitResourceChanged('products'); } catch (e) {}
   } else {
     console.log(`ℹ️ No new codes to add for product ${productId} (all ${codes.length} were duplicates)`);
   }
@@ -383,7 +390,7 @@ app.post('/api/codes', verifyToken, requireAdmin, asyncHandler(async (req, res) 
       console.error('⚠️ Failed to update Product with new codes:', err.message);
     }
   }
-
+  try { emitResourceChanged('inventory'); } catch (e) {}
   res.status(201).json({ count: result.length, duplicates: duplicateCount, codes: result });
 }));
 
@@ -402,6 +409,7 @@ app.put('/api/codes/:id', asyncHandler(async (req, res) => {
   );
 
   if (!code) return res.status(404).json({ message: 'الكود غير موجود' });
+  try { emitResourceChanged('inventory'); emitResourceChanged('products'); } catch (e) {}
   res.json(code);
 }));
 
@@ -409,6 +417,7 @@ app.put('/api/codes/:id', asyncHandler(async (req, res) => {
 app.delete('/api/codes/:id', asyncHandler(async (req, res) => {
   const code = await Code.findOneAndDelete({ id: req.params.id });
   if (!code) return res.status(404).json({ message: 'الكود غير موجود' });
+  try { emitResourceChanged('inventory'); emitResourceChanged('products'); } catch (e) {}
   res.json({ success: true });
 }));
 
@@ -458,6 +467,7 @@ app.get('/api/settings', asyncHandler(async (req, res) => {
 app.put('/api/settings', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const payload = req.body || {};
   const updated = await Settings.findOneAndUpdate({}, payload, { upsert: true, new: true, setDefaultsOnInsert: true });
+  try { emitResourceChanged('settings'); } catch (e) {}
   res.json(updated);
 }));
 
@@ -614,7 +624,8 @@ app.post('/api/orders', asyncHandler(async (req, res) => {
         }
 
         await session.commitTransaction();
-        res.status(201).json(order);
+  try { emitResourceChanged('orders'); emitResourceChanged('products'); emitResourceChanged('inventory'); } catch (e) {}
+  res.status(201).json(order);
 
     } catch (error) {
         await session.abortTransaction();
@@ -693,7 +704,8 @@ app.post('/api/orders/confirm', asyncHandler(async (req, res) => {
 
     await session.commitTransaction();
 
-    return res.json({ success: true, orderId: order.id, deliveryCodes: order.deliveryCodes });
+  try { emitResourceChanged('orders'); emitResourceChanged('products'); emitResourceChanged('inventory'); } catch (e) {}
+  return res.json({ success: true, orderId: order.id, deliveryCodes: order.deliveryCodes });
   } catch (err) {
     await session.abortTransaction();
     console.error('confirmOrder error:', err);
@@ -916,12 +928,39 @@ app.use((req, res) => {
 });
 
 // --- Start Server ---
+// Attach Socket.IO to the existing HTTP server so we can push realtime updates
+const { Server: IOServer } = require('socket.io');
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n✅ Server running on port ${PORT}`);
     console.log(`📝 API: https://backendpay-1.onrender.com/api`);
     console.log(`🏥 Health Check: https://backendpay-1.onrender.com/api/health`);
     seedData();
 });
+
+// Initialize Socket.IO
+const io = new IOServer(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('🔌 Client connected to realtime socket:', socket.id);
+  socket.on('disconnect', () => {
+    console.log('🔌 Client disconnected:', socket.id);
+  });
+});
+
+// Helper to emit resource change events
+function emitResourceChanged(resource) {
+  try {
+    io.emit('resource:changed', { resource });
+    console.log('🔔 Emitted resource:changed ->', resource);
+  } catch (e) {
+    console.warn('Could not emit resource change', e && e.message);
+  }
+}
 
 // --- Graceful Shutdown ---
 process.on('SIGTERM', () => {
