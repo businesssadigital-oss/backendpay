@@ -9,7 +9,7 @@ const path = require('path');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || process.env.MONGO_URL || '';
+const MONGO_URI = process.env.MONGO_URI || process.env.MONGO_URL || 'mongodb+srv://dariripay:s.a.2016%40S@pay.w8d4cp7.mongodb.net/?appName=pay';
 
 const app = express();
 app.use(cors());
@@ -89,6 +89,31 @@ app.get('/api/settings', async (req, res) => {
   } catch (err) {
     console.error('GET /api/settings error', err);
     res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+// Payment methods (safe read-only)
+app.get('/api/payment-methods', async (req, res) => {
+  try {
+    // attempt to read collection if exists; return empty array if not
+    const PaymentMethod = mongoose.models.PaymentMethod || mongoose.model('PaymentMethod', new mongoose.Schema({}, { strict: false, collection: 'payment_methods' }));
+    const methods = await PaymentMethod.find({}).lean().catch(() => []);
+    res.json(methods || []);
+  } catch (err) {
+    console.error('GET /api/payment-methods error', err);
+    res.status(500).json({ error: 'Failed to fetch payment methods' });
+  }
+});
+
+// Reviews (safe read-only)
+app.get('/api/reviews', async (req, res) => {
+  try {
+    const Review = mongoose.models.Review || mongoose.model('Review', new mongoose.Schema({}, { strict: false, collection: 'reviews' }));
+    const reviews = await Review.find({}).lean().catch(() => []);
+    res.json(reviews || []);
+  } catch (err) {
+    console.error('GET /api/reviews error', err);
+    res.status(500).json({ error: 'Failed to fetch reviews' });
   }
 });
 
