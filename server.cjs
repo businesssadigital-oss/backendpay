@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 // fs/path used elsewhere (keep requires if needed later)
 const fs = require('fs').promises;
+const fsSync = require('fs');
+const multer = require('multer');
 const path = require('path');
 
 // --- Configuration ---
@@ -29,6 +31,28 @@ const PAYPAL_BASE_URL = 'https://api-m.sandbox.paypal.com';
 // --- Middleware ---
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Serve uploaded files (logos etc.) from /uploads
+const uploadsDir = path.join(__dirname, 'public', 'uploads');
+// Ensure uploads directory exists synchronously before multer tries to write
+try {
+  fsSync.mkdirSync(uploadsDir, { recursive: true });
+} catch (e) {
+  console.warn('Could not create uploads dir:', e && e.message);
+}
+app.use('/uploads', express.static(uploadsDir));
+
+// Multer setup for multipart/form-data file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname) || '.png';
+    cb(null, `logo-${Date.now()}${ext}`);
+  }
+});
+const upload = multer({ storage });
 
 // adminAuth middleware removed (editor endpoints cleaned up)
 
@@ -173,6 +197,13 @@ const SettingsSchema = new mongoose.Schema({
     telegram: { type: String, default: '' },
     youtube: { type: String, default: '' }
   }
+});
+
+// Extend settings with contact information
+SettingsSchema.add({
+  contactAddress: { type: String, default: 'الرياض، المملكة العربية السعودية\nحي الصحافة، طريق الملك فهد' },
+  contactPhone: { type: String, default: '+966 55 123 4567' },
+  contactEmail: { type: String, default: 'support@matajir.com' }
 });
 
 const Settings = mongoose.model('Settings', SettingsSchema);
@@ -424,10 +455,39 @@ app.get('/api/settings', asyncHandler(async (req, res) => {
   res.json(doc);
 }));
 
-app.put('/api/settings', asyncHandler(async (req, res) => {
+app.put('/api/settings', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const payload = req.body || {};
   const updated = await Settings.findOneAndUpdate({}, payload, { upsert: true, new: true, setDefaultsOnInsert: true });
   res.json(updated);
+}));
+
+// Upload logo (multipart/form-data with field 'file')
+// Also keeps backward-compatible support for JSON { dataUrl: 'data:...' }
+app.post('/api/upload/logo', verifyToken, requireAdmin, upload.single('file'), asyncHandler(async (req, res) => {
+  // If a file was uploaded via multipart form-data, return its URL
+  if (req.file && req.file.filename) {
+    const filename = req.file.filename;
+    const url = `${req.protocol}://${req.get('host')}/uploads/${filename}`;
+    return res.json({ url });
+  }
+
+  // Fallback: accept JSON { dataUrl }
+  const { dataUrl } = req.body || {};
+  if (!dataUrl || typeof dataUrl !== 'string') return res.status(400).json({ message: 'dataUrl is required' });
+
+  const match = dataUrl.match(/^data:(image\/(png|jpeg|jpg|webp));base64,(.+)$/);
+  if (!match) return res.status(400).json({ message: 'Invalid data URL' });
+
+  const ext = match[2] === 'jpeg' ? 'jpg' : match[2];
+  const b64 = match[3];
+  const buffer = Buffer.from(b64, 'base64');
+
+  const filename = `logo-${Date.now()}.${ext}`;
+  const filepath = path.join(uploadsDir, filename);
+  await fs.writeFile(filepath, buffer);
+
+  const url = `${req.protocol}://${req.get('host')}/uploads/${filename}`;
+  res.json({ url });
 }));
 
 // Users & Auth
