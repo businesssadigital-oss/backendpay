@@ -69,7 +69,7 @@ GET    /api/products                    # List all products
 POST   /api/products                    # Create product (admin)
 PUT    /api/products/:id                # Update product (admin)
 DELETE /api/products/:id                # Delete product (admin)
-POST   /api/products/:id/codes          # Add codes to product (admin)
+POST   /api/codes                       # Add codes to product with duplicate prevention (admin)
 ```
 
 ### Categories

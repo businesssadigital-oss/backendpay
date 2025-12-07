@@ -119,6 +119,9 @@ const CodeSchema = new mongoose.Schema({
   orderId: { type: String, default: null }
 });
 
+// Create composite unique index to prevent duplicate codes for the same product
+CodeSchema.index({ productId: 1, code: 1 }, { unique: true, sparse: true });
+
 const Product = mongoose.model('Product', ProductSchema);
 const User = mongoose.model('User', UserSchema);
 const Order = mongoose.model('Order', OrderSchema);
@@ -225,17 +228,6 @@ app.delete('/api/products/:id', asyncHandler(async (req, res) => {
     res.json({ success: true });
 }));
 
-app.post('/api/products/:id/codes', asyncHandler(async (req, res) => {
-    const { codes } = req.body;
-    const product = await Product.findOne({ id: req.params.id });
-    if (!product) return res.status(404).json({ message: 'المنتج غير موجود' });
-    
-    product.availableCodes.push(...codes);
-    product.stock += codes.length;
-    await product.save();
-    res.json({ success: true });
-}));
-
 // Categories
 app.get('/api/categories', asyncHandler(async (req, res) => {
   const categories = await Category.find();
@@ -267,35 +259,66 @@ app.get('/api/codes', asyncHandler(async (req, res) => {
   res.json(codes);
 }));
 
-// POST /api/codes -> add codes in bulk
+// POST /api/codes -> add codes in bulk (with duplicate prevention)
 app.post('/api/codes', asyncHandler(async (req, res) => {
   const { productId, codes } = req.body;
   if (!productId || !Array.isArray(codes) || codes.length === 0) {
     return res.status(400).json({ message: 'productId and codes array are required' });
   }
 
-  const newCodes = codes.map(c => ({
-    id: `code-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    productId: String(productId),
-    code: String(c).trim(),
-    status: 'available',
-    createdAt: new Date()
-  }));
+  const productIdStr = String(productId);
+  const codesToInsert = [];
+  const newCodes = [];
+  let duplicateCount = 0;
 
-  const result = await Code.insertMany(newCodes);
-  console.log(`✅ Added ${result.length} codes for product ${productId}`);
-  // Also update the Product document's embedded availableCodes and stock to keep both sources consistent
-  try {
-    await Product.updateOne(
-      { id: String(productId) },
-      { $push: { availableCodes: { $each: codes } }, $inc: { stock: codes.length } }
-    );
-  } catch (err) {
-    console.error('⚠️ Failed to update Product with new codes:', err.message);
-    // Not a fatal error for codes insertion; continue to return success for codes collection
+  // Check which codes already exist for this product
+  for (const c of codes) {
+    const codeStr = String(c).trim();
+    const existing = await Code.findOne({ productId: productIdStr, code: codeStr });
+    
+    if (!existing) {
+      // Code doesn't exist, safe to add
+      const newCode = {
+        id: `code-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        productId: productIdStr,
+        code: codeStr,
+        status: 'available',
+        createdAt: new Date()
+      };
+      codesToInsert.push(newCode);
+      newCodes.push(codeStr);
+    } else {
+      // Code already exists for this product, skip it
+      duplicateCount++;
+      console.log(`⚠️ Skipped duplicate code "${codeStr}" for product ${productId}`);
+    }
   }
 
-  res.status(201).json({ count: result.length, codes: result });
+  // Insert only new codes
+  let result = [];
+  if (codesToInsert.length > 0) {
+    result = await Code.insertMany(codesToInsert);
+    console.log(`✅ Added ${result.length} codes for product ${productId} (${duplicateCount} duplicates skipped)`);
+  } else {
+    console.log(`ℹ️ No new codes to add for product ${productId} (all ${codes.length} were duplicates)`);
+  }
+
+  // Update Product document's availableCodes with only new codes
+  if (newCodes.length > 0) {
+    try {
+      await Product.updateOne(
+        { id: productIdStr },
+        { 
+          $push: { availableCodes: { $each: newCodes } }, 
+          $inc: { stock: newCodes.length } 
+        }
+      );
+    } catch (err) {
+      console.error('⚠️ Failed to update Product with new codes:', err.message);
+    }
+  }
+
+  res.status(201).json({ count: result.length, duplicates: duplicateCount, codes: result });
 }));
 
 // PUT /api/codes/:id -> mark code as sold
