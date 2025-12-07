@@ -500,6 +500,85 @@ app.post('/api/orders', asyncHandler(async (req, res) => {
     }
 }));
 
+// Confirm Order (mark codes sold and create an order) - safer endpoint used by checkout flow
+app.post('/api/orders/confirm', asyncHandler(async (req, res) => {
+  const { productId, userId, quantity } = req.body || {};
+
+  if (!productId || !userId || !quantity || quantity <= 0) {
+    return res.status(400).json({ message: 'productId, userId and positive quantity are required' });
+  }
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    // Fetch product to compute total and validate
+    const product = await Product.findOne({ id: String(productId) }).session(session);
+    if (!product) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: 'المنتج غير موجود' });
+    }
+
+    // Find available codes
+    const codes = await Code.find({ productId: String(productId), status: 'available' }).limit(Number(quantity)).session(session);
+    if (!codes || codes.length < Number(quantity)) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: 'لا يوجد أكواد كافية لهذا المنتج' });
+    }
+
+    // 1) Create Order document
+    const orderId = `ord-${Date.now()}`;
+    const items = [{ productId: String(productId), quantity: Number(quantity) }];
+    const total = (product.price || 0) * Number(quantity);
+
+    const order = new Order({
+      id: orderId,
+      userId: String(userId),
+      date: new Date().toISOString(),
+      items,
+      total,
+      status: 'completed',
+      deliveryCodes: {},
+      paymentMethod: 'Chargily Pay'
+    });
+
+    // 2) Attach codes to order.deliveryCodes
+    order.deliveryCodes[String(productId)] = codes.map(c => c.code);
+    await order.save({ session });
+
+    // 3) Mark codes as sold
+    const codeIds = codes.map(c => c._id);
+    await Code.updateMany(
+      { _id: { $in: codeIds } },
+      {
+        $set: {
+          status: 'sold',
+          soldAt: new Date(),
+          soldTo: String(userId),
+          orderId: order.id
+        }
+      },
+      { session }
+    );
+
+    // 4) Update Product.availableCodes and stock to remove sold codes
+    const soldCodeValues = codes.map(c => c.code);
+    product.availableCodes = (product.availableCodes || []).filter(code => !soldCodeValues.includes(code));
+    product.stock = (product.availableCodes || []).length;
+    product.markModified('availableCodes');
+    await product.save({ session });
+
+    await session.commitTransaction();
+
+    return res.json({ success: true, orderId: order.id, deliveryCodes: order.deliveryCodes });
+  } catch (err) {
+    await session.abortTransaction();
+    console.error('confirmOrder error:', err);
+    return res.status(500).json({ message: 'خطأ في تأكيد الطلب' });
+  } finally {
+    session.endSession();
+  }
+}));
+
 // Update Order with PayPal ID
 app.put('/api/orders/:orderId/paypal/:paypalOrderId', asyncHandler(async (req, res) => {
     const { orderId, paypalOrderId } = req.params;
