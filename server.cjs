@@ -489,6 +489,27 @@ app.post('/api/orders', asyncHandler(async (req, res) => {
         });
 
         await order.save({ session });
+        // Mark delivered codes as sold in Codes collection as well
+        try {
+          const allDeliveredCodes = Object.values(deliveryCodes).flat();
+          if (allDeliveredCodes.length > 0) {
+            await Code.updateMany(
+              { productId: { $in: Object.keys(deliveryCodes) }, code: { $in: allDeliveredCodes } },
+              {
+                $set: {
+                  status: 'sold',
+                  soldAt: new Date(),
+                  soldTo: userId || null,
+                  orderId: orderId
+                }
+              },
+              { session }
+            );
+          }
+        } catch (err) {
+          console.warn('Warning: failed to mark codes as sold in Codes collection', err.message);
+        }
+
         await session.commitTransaction();
         res.status(201).json(order);
 
