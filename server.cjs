@@ -2,6 +2,8 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 // fs/path used elsewhere (keep requires if needed later)
 const fs = require('fs').promises;
 const path = require('path');
@@ -10,6 +12,8 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://dariripay:s.a.2016%40S@pay.w8d4cp7.mongodb.net/?appName=pay';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 // Note: admin editor endpoints removed for production safety.
 
@@ -119,6 +123,32 @@ const CodeSchema = new mongoose.Schema({
   orderId: { type: String, default: null }
 });
 
+// --- JWT helpers / auth middleware ---
+function generateToken(user) {
+  // Sign a token with minimal safe fields
+  const payload = { id: user.id, email: user.email, role: user.role };
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+
+function verifyToken(req, res, next) {
+  const auth = req.headers.authorization || '';
+  if (!auth.startsWith('Bearer ')) return res.status(401).json({ message: 'Unauthorized' });
+  const token = auth.split(' ')[1];
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ message: 'Unauthorized' });
+  if (req.user.role !== 'admin') return res.status(403).json({ message: 'Forbidden' });
+  next();
+}
+
 // Create composite unique index to prevent duplicate codes for the same product
 CodeSchema.index({ productId: 1, code: 1 }, { unique: true, sparse: true });
 
@@ -169,10 +199,15 @@ const seedData = async () => {
             // Add more seed products here if needed
         ];
 
-        const users = [
+        const usersPlain = [
             { id: 'u1', name: 'مدير النظام', email: 'admin@matajir.com', password: '123', role: 'admin', balance: 1000 },
             { id: 'u2', name: 'أحمد محمد', email: 'user@matajir.com', password: '123', role: 'user', balance: 50 }
         ];
+
+        // Hash seeded user passwords so they match auth flow
+        for (const u of usersPlain) {
+          u.password = await bcrypt.hash(String(u.password), 10);
+        }
 
         const methods = [
             { id: 'pm_card', name: 'بطاقة ائتمان', type: 'card', isActive: true, description: 'دفع آمن' },
@@ -181,9 +216,9 @@ const seedData = async () => {
             { id: 'pm_wallet', name: 'محفظة المنصة', type: 'wallet', isActive: false, description: 'رصيدك الحالي' }
         ];
 
-        await Category.insertMany(categories);
-        await Product.insertMany(products);
-        await User.insertMany(users);
+  await Category.insertMany(categories);
+  await Product.insertMany(products);
+  await User.insertMany(usersPlain);
         await PaymentMethod.insertMany(methods);
         console.log('Database Seeded!');
     }
@@ -210,22 +245,22 @@ app.get('/api/products', asyncHandler(async (req, res) => {
     res.json(products);
 }));
 
-app.post('/api/products', asyncHandler(async (req, res) => {
-    const product = new Product(req.body);
-    await product.save();
-    res.status(201).json(product);
+app.post('/api/products', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
+  const product = new Product(req.body);
+  await product.save();
+  res.status(201).json(product);
 }));
 
-app.put('/api/products/:id', asyncHandler(async (req, res) => {
-    const product = await Product.findOneAndUpdate({ id: req.params.id }, req.body, { new: true });
-    if (!product) return res.status(404).json({ message: 'المنتج غير موجود' });
-    res.json(product);
+app.put('/api/products/:id', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
+  const product = await Product.findOneAndUpdate({ id: req.params.id }, req.body, { new: true });
+  if (!product) return res.status(404).json({ message: 'المنتج غير موجود' });
+  res.json(product);
 }));
 
-app.delete('/api/products/:id', asyncHandler(async (req, res) => {
-    const product = await Product.findOneAndDelete({ id: req.params.id });
-    if (!product) return res.status(404).json({ message: 'المنتج غير موجود' });
-    res.json({ success: true });
+app.delete('/api/products/:id', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
+  const product = await Product.findOneAndDelete({ id: req.params.id });
+  if (!product) return res.status(404).json({ message: 'المنتج غير موجود' });
+  res.json({ success: true });
 }));
 
 // Categories
@@ -234,16 +269,16 @@ app.get('/api/categories', asyncHandler(async (req, res) => {
   res.json(categories);
 }));
 
-app.post('/api/categories', asyncHandler(async (req, res) => {
-    const cat = new Category(req.body);
-    await cat.save();
-    res.status(201).json(cat);
+app.post('/api/categories', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
+  const cat = new Category(req.body);
+  await cat.save();
+  res.status(201).json(cat);
 }));
 
-app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
-    const category = await Category.findOneAndDelete({ id: req.params.id });
-    if (!category) return res.status(404).json({ message: 'الفئة غير موجودة' });
-    res.json({ success: true });
+app.delete('/api/categories/:id', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
+  const category = await Category.findOneAndDelete({ id: req.params.id });
+  if (!category) return res.status(404).json({ message: 'الفئة غير موجودة' });
+  res.json({ success: true });
 }));
 
 // --- Codes Management (in Database) ---
@@ -260,7 +295,7 @@ app.get('/api/codes', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/codes -> add codes in bulk (with duplicate prevention)
-app.post('/api/codes', asyncHandler(async (req, res) => {
+app.post('/api/codes', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const { productId, codes } = req.body;
   if (!productId || !Array.isArray(codes) || codes.length === 0) {
     return res.status(400).json({ message: 'productId and codes array are required' });
@@ -396,7 +431,7 @@ app.put('/api/settings', asyncHandler(async (req, res) => {
 }));
 
 // Users & Auth
-app.get('/api/users', asyncHandler(async (req, res) => {
+app.get('/api/users', verifyToken, requireAdmin, asyncHandler(async (req, res) => {
   const users = await User.find();
   res.json(users);
 }));
@@ -407,9 +442,15 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
       return res.status(400).json({ message: 'البريد والكلمة المرورية مطلوبة' });
     }
     
-    const user = await User.findOne({ email, password });
+    const user = await User.findOne({ email });
     if (!user) return res.status(401).json({ message: 'بيانات الدخول غير صحيحة' });
-    res.json(user);
+
+    const ok = await bcrypt.compare(String(password), String(user.password));
+    if (!ok) return res.status(401).json({ message: 'بيانات الدخول غير صحيحة' });
+
+    // generate JWT
+    const token = generateToken(user);
+    res.json({ user, token });
 }));
 
 app.post('/api/auth/register', asyncHandler(async (req, res) => {
@@ -421,15 +462,17 @@ app.post('/api/auth/register', asyncHandler(async (req, res) => {
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ message: 'البريد الإلكتروني مسجل مسبقاً' });
     
+    const hashed = await bcrypt.hash(String(password), 10);
     const user = new User({ 
       id: `u-${Date.now()}`,
       email, 
-      password, 
+      password: hashed, 
       name: name || 'مستخدم جديد',
       role: 'user'
     });
     await user.save();
-    res.status(201).json(user);
+    const token = generateToken(user);
+    res.status(201).json({ user, token });
 }));
 
 // Orders & Transaction Logic

@@ -21,10 +21,14 @@ const USER_ID = process.env.TEST_USER_ID || 'u2';
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+let AUTH_TOKEN = '';
+
 async function postJson(path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (AUTH_TOKEN) headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body)
   });
   const json = await res.json().catch(() => ({}));
@@ -61,7 +65,19 @@ async function getJson(path) {
       }
     }
 
-    // 1) Add codes (two unique codes)
+      // If admin credentials provided via env, login to obtain token for protected endpoints
+      const ADMIN_EMAIL = process.env.TEST_ADMIN_EMAIL || 'admin@matajir.com';
+      const ADMIN_PWD = process.env.TEST_ADMIN_PWD || '123';
+      console.log('Logging in as admin to obtain token...');
+      const loginResp = await postJson('/api/auth/login', { email: ADMIN_EMAIL, password: ADMIN_PWD });
+      if (loginResp.status === 200 && loginResp.body && loginResp.body.token) {
+        AUTH_TOKEN = loginResp.body.token;
+        console.log('Obtained admin token');
+      } else {
+        console.warn('Admin login failed or no token returned — continuing without auth (may fail on protected endpoints)');
+      }
+
+      // 1) Add codes (two unique codes)
     const testCodes = [`TEST-${Date.now()}-A`, `TEST-${Date.now()}-B`];
   console.log('Adding test codes:', testCodes);
   const addResp = await postJson('/api/codes', { productId: PRODUCT_ID, codes: testCodes });
