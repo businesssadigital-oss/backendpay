@@ -122,7 +122,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Read-only server listening on port ${PORT}`);
-  console.log(`📝 Health: http://localhost:${PORT}/api/health`);
+  console.log(`📝 Health: https://backendpay-1.onrender.com/api/health`);
 });
 
 function shutdown() {
