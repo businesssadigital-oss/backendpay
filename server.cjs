@@ -28,6 +28,17 @@ app.use(express.json({ limit: '50mb' }));
 
 // adminAuth middleware removed (editor endpoints cleaned up)
 
+// --- MongoDB Connection Check Middleware ---
+const mongoConnectReadyMiddleware = (req, res, next) => {
+  if (mongoose.connection.readyState === 1) {
+    return next();
+  }
+  res.status(503).json({ 
+    message: 'الخادم غير جاهز',
+    detail: 'قاعدة البيانات قيد الاتصال'
+  });
+};
+
 // --- MongoDB Connection with Better Error Handling ---
 mongoose.connect(MONGO_URI, {
   serverSelectionTimeoutMS: 5000,
@@ -205,7 +216,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Products
-app.get('/api/products', asyncHandler(async (req, res) => {
+app.get('/api/products', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
     const products = await Product.find();
     res.json(products);
 }));
@@ -229,7 +240,7 @@ app.delete('/api/products/:id', asyncHandler(async (req, res) => {
 }));
 
 // Categories
-app.get('/api/categories', asyncHandler(async (req, res) => {
+app.get('/api/categories', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
   const categories = await Category.find();
   res.json(categories);
 }));
@@ -248,7 +259,7 @@ app.delete('/api/categories/:id', asyncHandler(async (req, res) => {
 
 // --- Codes Management (in Database) ---
 // GET /api/codes?productId=xxx&status=available  -> list codes
-app.get('/api/codes', asyncHandler(async (req, res) => {
+app.get('/api/codes', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
   const { productId, status } = req.query;
   const filter = {};
   if (productId) filter.productId = String(productId);
@@ -361,7 +372,7 @@ app.get('/api/codes/stats/:productId', asyncHandler(async (req, res) => {
 }));
 
 // Payment Methods
-app.get('/api/payment-methods', asyncHandler(async (req, res) => {
+app.get('/api/payment-methods', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
   const methods = await PaymentMethod.find();
   res.json(methods);
 }));
@@ -373,7 +384,7 @@ app.put('/api/payment-methods/:id', asyncHandler(async (req, res) => {
 }));
 
 // --- Settings endpoints (GET/PUT) ---
-app.get('/api/settings', asyncHandler(async (req, res) => {
+app.get('/api/settings', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
   // Return the single settings document (or defaults)
   let doc = await Settings.findOne().lean();
   if (!doc) {
@@ -396,7 +407,7 @@ app.put('/api/settings', asyncHandler(async (req, res) => {
 }));
 
 // Users & Auth
-app.get('/api/users', asyncHandler(async (req, res) => {
+app.get('/api/users', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
   const users = await User.find();
   res.json(users);
 }));
@@ -433,7 +444,7 @@ app.post('/api/auth/register', asyncHandler(async (req, res) => {
 }));
 
 // Orders & Transaction Logic
-app.get('/api/orders', asyncHandler(async (req, res) => {
+app.get('/api/orders', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
   const orders = await Order.find();
   res.json(orders);
 }));
@@ -623,7 +634,7 @@ app.put('/api/orders/:orderId/paypal/:paypalOrderId', asyncHandler(async (req, r
 }));
 
 // Reviews
-app.get('/api/reviews', asyncHandler(async (req, res) => {
+app.get('/api/reviews', mongoConnectReadyMiddleware, asyncHandler(async (req, res) => {
   const reviews = await Review.find();
   res.json(reviews);
 }));
