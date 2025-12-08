@@ -15,6 +15,10 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
+// HTTP server and Socket.IO will be attached later to support realtime dashboard
+const http = require('http');
+const { Server: IOServer } = require('socket.io');
+
 if (!MONGO_URI) {
   console.warn('⚠️ No MONGO_URI set in environment. Set MONGO_URI in .env to connect to your DB.');
 }
@@ -117,16 +121,257 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
+// ---- Guard for write routes ----
+const ENABLE_WRITES = process.env.ALLOW_WRITES === 'true';
+if (!ENABLE_WRITES) {
+  console.log('ℹ️ Write routes are disabled. Set ALLOW_WRITES=true to enable write endpoints.');
+}
+
+// Helper to emit resource changed events from write routes
+function emitResourceChanged(collection, operationType, doc) {
+  try {
+    const payload = {
+      collection,
+      operationType,
+      documentKey: doc && doc._id ? { _id: doc._id } : null,
+      fullDocument: doc || null,
+      ts: new Date()
+    };
+    io.emit('resource:changed', payload);
+  } catch (e) {
+    console.warn('emitResourceChanged failed', e && e.message ? e.message : e);
+  }
+}
+
+// ---- Write endpoints (guarded) ----
+app.post('/api/products', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await Product.create(req.body);
+    emitResourceChanged('products', 'insert', doc);
+    res.json(doc);
+  } catch (err) {
+    console.error('POST /api/products error', err);
+    res.status(500).json({ error: 'Failed to create product' });
+  }
+});
+
+app.put('/api/products/:id', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true }).lean();
+    emitResourceChanged('products', 'update', doc);
+    res.json(doc || {});
+  } catch (err) {
+    console.error('PUT /api/products/:id error', err);
+    res.status(500).json({ error: 'Failed to update product' });
+  }
+});
+
+app.delete('/api/products/:id', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const result = await Product.deleteOne({ _id: req.params.id });
+    emitResourceChanged('products', 'delete', { _id: req.params.id });
+    res.json({ deletedCount: result.deletedCount });
+  } catch (err) {
+    console.error('DELETE /api/products/:id error', err);
+    res.status(500).json({ error: 'Failed to delete product' });
+  }
+});
+
+// Orders write endpoints
+app.post('/api/orders', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await Order.create(req.body);
+    emitResourceChanged('orders', 'insert', doc);
+    res.json(doc);
+  } catch (err) {
+    console.error('POST /api/orders error', err);
+    res.status(500).json({ error: 'Failed to create order' });
+  }
+});
+
+app.put('/api/orders/:id', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await Order.findByIdAndUpdate(req.params.id, req.body, { new: true }).lean();
+    emitResourceChanged('orders', 'update', doc);
+    res.json(doc || {});
+  } catch (err) {
+    console.error('PUT /api/orders/:id error', err);
+    res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
+// Categories
+app.post('/api/categories', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await Category.create(req.body);
+    emitResourceChanged('categories', 'insert', doc);
+    res.json(doc);
+  } catch (err) {
+    console.error('POST /api/categories error', err);
+    res.status(500).json({ error: 'Failed to create category' });
+  }
+});
+
+app.put('/api/categories/:id', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true }).lean();
+    emitResourceChanged('categories', 'update', doc);
+    res.json(doc || {});
+  } catch (err) {
+    console.error('PUT /api/categories/:id error', err);
+    res.status(500).json({ error: 'Failed to update category' });
+  }
+});
+
+// Settings (single document)
+app.put('/api/settings', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await Setting.findOneAndUpdate({}, req.body, { upsert: true, new: true }).lean();
+    emitResourceChanged('settings', 'update', doc);
+    res.json(doc || {});
+  } catch (err) {
+    console.error('PUT /api/settings error', err);
+    res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+// Payment methods and reviews (dynamic models)
+const PaymentMethodModel = mongoose.models.PaymentMethod || mongoose.model('PaymentMethod', new mongoose.Schema({}, { strict: false, collection: 'payment_methods' }));
+const ReviewModel = mongoose.models.Review || mongoose.model('Review', new mongoose.Schema({}, { strict: false, collection: 'reviews' }));
+
+app.post('/api/payment-methods', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await PaymentMethodModel.create(req.body);
+    emitResourceChanged('payment_methods', 'insert', doc);
+    res.json(doc);
+  } catch (err) {
+    console.error('POST /api/payment-methods error', err);
+    res.status(500).json({ error: 'Failed to create payment method' });
+  }
+});
+
+app.post('/api/reviews', async (req, res) => {
+  if (!ENABLE_WRITES) return res.status(403).json({ error: 'Writes disabled' });
+  try {
+    const doc = await ReviewModel.create(req.body);
+    emitResourceChanged('reviews', 'insert', doc);
+    res.json(doc);
+  } catch (err) {
+    console.error('POST /api/reviews error', err);
+    res.status(500).json({ error: 'Failed to create review' });
+  }
+});
+
 // Static uploads (read-only)
 app.use('/uploads', express.static(path.join(__dirname, 'public', 'uploads')));
 
-const server = app.listen(PORT, '0.0.0.0', () => {
+// Create HTTP server so Socket.IO can share the same server
+const server = http.createServer(app);
+
+// Socket.IO options and allowed origins (allow FRONTEND_ORIGIN env or all origins)
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
+const io = new IOServer(server, {
+  cors: {
+    origin: FRONTEND_ORIGIN,
+    methods: ['GET', 'POST']
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('🔌 Socket.IO client connected', socket.id);
+  socket.emit('ready', { msg: 'Welcome to realtime API' });
+
+  socket.on('disconnect', (reason) => {
+    console.log('🔌 Socket.IO client disconnected', socket.id, reason);
+  });
+});
+
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Read-only server listening on port ${PORT}`);
   console.log(`📝 Health: https://backendpay-1.onrender.com/api/health`);
 });
 
+// Realtime: set up MongoDB change streams to emit events to connected clients.
+// Enable with REALTIME=true (default true unless explicitly set to 'false')
+const ENABLE_REALTIME = process.env.REALTIME !== 'false';
+const changeStreams = [];
+
+async function setupChangeStreams() {
+  if (!ENABLE_REALTIME) return;
+  if (mongoose.connection.readyState !== 1) {
+    console.warn('Realtime disabled: MongoDB is not connected (change streams require a live connection)');
+    return;
+  }
+
+  // Candidate collection names to watch (covers possible naming variations)
+  const collectionsToWatch = [
+    'products', 'orders', 'categories', 'settings', 'payment_methods', 'payments', 'reviews',
+    'matajir_products','matajir_orders','matajir_categories','matajir_payments','matajir_reviews','matajir_settings'
+  ];
+
+  const db = mongoose.connection.db;
+  for (const name of collectionsToWatch) {
+    try {
+      const coll = db.collection(name);
+      // Start watching with updateLookup to get fullDocument on updates
+      const stream = coll.watch([], { fullDocument: 'updateLookup' });
+      stream.on('change', (change) => {
+        try {
+          const payload = {
+            collection: name,
+            operationType: change.operationType,
+            documentKey: change.documentKey,
+            fullDocument: change.fullDocument || null,
+            ns: change.ns || null,
+            clusterTime: change.clusterTime || null
+          };
+          io.emit('resource:changed', payload);
+        } catch (e) {
+          console.warn('Failed to emit change event', e);
+        }
+      });
+      stream.on('error', (err) => {
+        console.warn('Change stream error for', name, err && err.message ? err.message : err);
+        try { stream.close(); } catch (_) {}
+      });
+      changeStreams.push(stream);
+      console.log('👉 Watching collection for realtime:', name);
+    } catch (err) {
+      // Could be that collection doesn't exist or watch is unsupported (standalone mongod)
+      console.info('Cannot watch collection', name, err && err.message ? err.message : err);
+    }
+  }
+}
+
+// If DB is already connected, set up change streams; otherwise, attach to open event
+if (mongoose.connection.readyState === 1) {
+  setupChangeStreams().catch((e) => console.warn('setupChangeStreams failed', e));
+} else {
+  mongoose.connection.once('open', () => {
+    setupChangeStreams().catch((e) => console.warn('setupChangeStreams failed', e));
+  });
+}
+
 function shutdown() {
   console.log('⚠️ Shutdown initiated');
+  try {
+    // Close change streams
+    for (const s of changeStreams) {
+      try { s.close(); } catch (_) {}
+    }
+  } catch (_) {}
+
+  io.close();
+
   server.close(() => {
     // mongoose.connection.close() returns a promise in modern mongoose
     mongoose.connection.close(false).then(() => {
