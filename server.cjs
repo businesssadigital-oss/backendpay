@@ -49,6 +49,10 @@ const Category = mongoose.models.Category || mongoose.model('Category', Category
 const Order = mongoose.models.Order || mongoose.model('Order', OrderSchema);
 const Setting = mongoose.models.Setting || mongoose.model('Setting', SettingSchema);
 
+// Codes schema (inventory of digital codes)
+const CodeSchema = new mongoose.Schema({}, { strict: false, collection: 'codes' });
+const Code = mongoose.models.Code || mongoose.model('Code', CodeSchema);
+
 // Health
 app.get('/api/health', (req, res) => {
   const state = mongoose.connection.readyState; // 0 disconnected, 1 connected
@@ -95,6 +99,69 @@ app.get('/api/settings', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch settings' });
   }
 });
+
+// --- Codes endpoints ---
+// GET /api/codes?productId=...&status=available|sold
+app.get('/api/codes', async (req, res) => {
+  try {
+    const { productId, status } = req.query;
+    const filter = {};
+    if (productId) filter.productId = String(productId);
+    if (status) {
+      if (String(status) === 'sold') filter.status = 'sold';
+      else if (String(status) === 'available') filter.$or = [{ status: { $exists: false } }, { status: { $ne: 'sold' } }];
+    }
+    const codes = await Code.find(filter).lean().limit(10000).catch(() => []);
+    res.json(codes || []);
+  } catch (err) {
+    console.error('GET /api/codes error', err);
+    res.status(500).json({ error: 'Failed to fetch codes' });
+  }
+});
+
+// GET /api/codes/stats/:productId -> { productId, available, sold, total }
+app.get('/api/codes/stats/:productId', async (req, res) => {
+  try {
+    const productId = req.params.productId;
+
+    // Prefer explicit 'codes' collection if present
+    const collectionNames = (await mongoose.connection.db.listCollections().toArray()).map(c => c.name);
+    if (collectionNames.includes('codes')) {
+      // aggregate available and sold
+      const soldCount = await Code.countDocuments({ productId, status: 'sold' }).catch(() => 0);
+      const availableCount = await Code.countDocuments({ productId, $or: [{ status: { $exists: false } }, { status: { $ne: 'sold' } }] }).catch(() => 0);
+      const total = soldCount + availableCount;
+      return res.json({ productId, available: availableCount, sold: soldCount, total });
+    }
+
+    // Fallback: try to read from products.availableCodes and orders.deliveryCodes
+    const prod = await Product.findOne({ id: productId }).lean().catch(() => null);
+    let available = 0;
+    if (prod) {
+      const availArr = prod.availableCodes || prod.available_codes || [];
+      available = Array.isArray(availArr) ? availArr.length : 0;
+    }
+
+    let sold = 0;
+    try {
+      const q = {};
+      q[`deliveryCodes.${productId}`] = { $exists: true };
+      const orders = await Order.find(q).lean();
+      for (const o of orders) {
+        const d = (o.deliveryCodes && o.deliveryCodes[productId]) || [];
+        sold += Array.isArray(d) ? d.length : 0;
+      }
+    } catch (e) {
+      sold = 0;
+    }
+    const total = available + sold;
+    res.json({ productId, available, sold, total });
+  } catch (err) {
+    console.error('GET /api/codes/stats/:productId error', err);
+    res.status(500).json({ error: 'Failed to compute code stats' });
+  }
+});
+
 
 // Payment methods (safe read-only)
 app.get('/api/payment-methods', async (req, res) => {
